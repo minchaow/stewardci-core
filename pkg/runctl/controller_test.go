@@ -21,6 +21,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/tools/record"
 	klog "k8s.io/klog/v2"
@@ -28,8 +29,9 @@ import (
 
 func Test_Controller_Success(t *testing.T) {
 	t.Parallel()
+
 	// SETUP
-	cf := fake.NewClientFactory(
+	cf := newFakeClientFactory(
 		fake.SecretOpaque("secret1", "ns1"),
 		fake.ClusterRole(string(runClusterRoleName)),
 	)
@@ -40,10 +42,10 @@ func Test_Controller_Success(t *testing.T) {
 	// EXERCISE
 	stopCh := startController(t, cf)
 	defer stopController(t, stopCh)
-	createRun(pr, cf)
+	createRun(t, pr, cf)
+
 	// VERIFY
-	run, err := getPipelineRun("run1", "ns1", cf)
-	assert.NilError(t, err)
+	run := getPipelineRun(t, "run1", "ns1", cf)
 	status := run.GetStatus()
 
 	assert.Assert(t, !strings.Contains(status.Message, "ERROR"), status.Message)
@@ -53,8 +55,9 @@ func Test_Controller_Success(t *testing.T) {
 
 func Test_Controller_Running(t *testing.T) {
 	t.Parallel()
+
 	// SETUP
-	cf := fake.NewClientFactory(
+	cf := newFakeClientFactory(
 		fake.SecretOpaque("secret1", "ns1"),
 		fake.ClusterRole(string(runClusterRoleName)),
 	)
@@ -65,29 +68,29 @@ func Test_Controller_Running(t *testing.T) {
 	// EXERCISE
 	stopCh := startController(t, cf)
 	defer stopController(t, stopCh)
-	createRun(pr, cf)
+	createRun(t, pr, cf)
+
 	// VERIFY
-	run, err := getPipelineRun("run1", "ns1", cf)
-	assert.NilError(t, err)
+	run := getPipelineRun(t, "run1", "ns1", cf)
 	runNs := run.GetRunNamespace()
-	taskRun, _ := getTektonTaskRun(runNs, cf)
+	taskRun := getTektonTaskRun(t, runNs, cf)
 	now := metav1.Now()
 	taskRun.Status.StartTime = &now
-	updateTektonTaskRun(taskRun, runNs, cf)
+	updateTektonTaskRun(t, taskRun, runNs, cf)
 	cf.Sleep("Waiting for Tekton TaskRun being started")
-	run, err = getPipelineRun("run1", "ns1", cf)
-	assert.NilError(t, err)
+	run = getPipelineRun(t, "run1", "ns1", cf)
 	status := run.GetStatus()
 	assert.Equal(t, api.StateRunning, status.State)
 }
 
 func Test_Controller_Deletion(t *testing.T) {
 	t.Parallel()
+
 	// SETUP
 	pr := fake.PipelineRun("run1", "ns1", api.PipelineSpec{
 		Secrets: []string{"secret1"},
 	})
-	cf := fake.NewClientFactory(
+	cf := newFakeClientFactory(
 		fake.SecretOpaque("secret1", "ns1"),
 		fake.ClusterRole(string(runClusterRoleName)),
 	)
@@ -95,29 +98,30 @@ func Test_Controller_Deletion(t *testing.T) {
 	// EXERCISE
 	stopCh := startController(t, cf)
 	defer stopController(t, stopCh)
-	createRun(pr, cf)
+	createRun(t, pr, cf)
+
 	// VERIFY
-	run, _ := getRun("run1", "ns1", cf)
+	run := getRun(t, "run1", "ns1", cf)
 
 	assert.Equal(t, 1, len(run.GetFinalizers()))
 
 	now := metav1.Now()
 	run.SetDeletionTimestamp(&now)
-	updateRun(run, "ns1", cf)
+	updateRun(t, run, "ns1", cf)
 
 	cf.Sleep("Wait for deletion")
-	run, _ = getRun("run1", "ns1", cf)
+	run = getRun(t, "run1", "ns1", cf)
 	assert.Equal(t, 0, len(run.GetFinalizers()))
-
 }
 
 func Test_Controller_syncHandler_givesUp_onPipelineRunNotFound(t *testing.T) {
 	t.Parallel()
+
 	// SETUP
 	mockCtrl := gomock.NewController(t)
 	defer mockCtrl.Finish()
 
-	cf := fake.NewClientFactory()
+	cf := newFakeClientFactory()
 	mockPipelineRunFetcher := mocks.NewMockPipelineRunFetcher(mockCtrl)
 	mockPipelineRunFetcher.EXPECT().
 		ByKey(gomock.Any()).
@@ -127,14 +131,13 @@ func Test_Controller_syncHandler_givesUp_onPipelineRunNotFound(t *testing.T) {
 
 	// EXERCISE
 	err := examinee.syncHandler("foo/bar")
+
 	// VERIFY
 	assert.NilError(t, err)
 }
 
 func newController(runs ...*api.PipelineRun) (*Controller, *fake.ClientFactory) {
-	cf := fake.NewClientFactory(fake.ClusterRole(string(runClusterRoleName)))
-	cs := cf.StewardClientset()
-	cs.PrependReactor("create", "*", fake.NewCreationTimestampReactor())
+	cf := newFakeClientFactory(fake.ClusterRole(string(runClusterRoleName)))
 	client := cf.StewardV1alpha1()
 	for _, run := range runs {
 		client.PipelineRuns(run.GetNamespace()).Create(run)
@@ -197,6 +200,7 @@ func Test_Controller_syncHandler_delete(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			test := test
 			t.Parallel()
+
 			// SETUP
 			run := fake.PipelineRun("foo", "ns1", api.PipelineSpec{})
 			if test.hasFinalizer {
@@ -210,8 +214,10 @@ func Test_Controller_syncHandler_delete(t *testing.T) {
 			runManager := runmocks.NewMockManager(mockCtrl)
 			test.runManagerExpectation(runManager)
 			controller.testing = &controllerTesting{runManagerStub: runManager}
+
 			// EXERCISE
 			err := controller.syncHandler("ns1/foo")
+
 			// VERIFY
 			if test.expectedError {
 				assert.Assert(t, err != nil)
@@ -245,7 +251,8 @@ func Test_Controller_syncHandler_mock(t *testing.T) {
 		expectedMessage       string
 		expectedError         error
 	}{
-		{name: "new_ok",
+		{
+			name:          "new_ok",
 			pipelineSpec:  api.PipelineSpec{},
 			currentStatus: api.PipelineStatus{},
 			runManagerExpectation: func(rm *runmocks.MockManager, run *runmocks.MockRun) {
@@ -254,7 +261,8 @@ func Test_Controller_syncHandler_mock(t *testing.T) {
 			expectedResult: api.ResultUndefined,
 			expectedState:  api.StateWaiting,
 		},
-		{name: "preparing_ok",
+		{
+			name:         "preparing_ok",
 			pipelineSpec: api.PipelineSpec{},
 			currentStatus: api.PipelineStatus{
 				State: api.StatePreparing,
@@ -265,7 +273,8 @@ func Test_Controller_syncHandler_mock(t *testing.T) {
 			expectedResult: api.ResultUndefined,
 			expectedState:  api.StateWaiting,
 		},
-		{name: "preparing_fail",
+		{
+			name:         "preparing_fail",
 			pipelineSpec: api.PipelineSpec{},
 			currentStatus: api.PipelineStatus{
 				State: api.StatePreparing,
@@ -278,7 +287,8 @@ func Test_Controller_syncHandler_mock(t *testing.T) {
 			expectedMessage: "",
 			expectedError:   error1,
 		},
-		{name: "preparing_fail_on_content_error_during_start",
+		{
+			name: "preparing_fail_on_content_error_during_start",
 			pipelineSpec: api.PipelineSpec{
 				Secrets: []string{"secret1"},
 			},
@@ -295,7 +305,8 @@ func Test_Controller_syncHandler_mock(t *testing.T) {
 			expectedState:   api.StateCleaning,
 			expectedMessage: "preparing failed .*error1",
 		},
-		{name: "waiting_fail",
+		{
+			name:         "waiting_fail",
 			pipelineSpec: api.PipelineSpec{},
 			currentStatus: api.PipelineStatus{
 				State: api.StateWaiting,
@@ -306,7 +317,8 @@ func Test_Controller_syncHandler_mock(t *testing.T) {
 			expectedResult: api.ResultErrorInfra,
 			expectedState:  api.StateCleaning,
 		},
-		{name: "waiting_recover",
+		{
+			name:         "waiting_recover",
 			pipelineSpec: api.PipelineSpec{},
 			currentStatus: api.PipelineStatus{
 				State: api.StateWaiting,
@@ -318,7 +330,8 @@ func Test_Controller_syncHandler_mock(t *testing.T) {
 			expectedState:  api.StateWaiting,
 			expectedError:  errorRecover1,
 		},
-		{name: "waiting_not_started",
+		{
+			name:         "waiting_not_started",
 			pipelineSpec: api.PipelineSpec{},
 			currentStatus: api.PipelineStatus{
 				State: api.StateWaiting,
@@ -330,7 +343,8 @@ func Test_Controller_syncHandler_mock(t *testing.T) {
 			expectedResult: "",
 			expectedState:  api.StateWaiting,
 		},
-		{name: "waiting_started",
+		{
+			name:         "waiting_started",
 			pipelineSpec: api.PipelineSpec{},
 			currentStatus: api.PipelineStatus{
 				State: api.StateWaiting,
@@ -343,7 +357,8 @@ func Test_Controller_syncHandler_mock(t *testing.T) {
 			expectedResult: "",
 			expectedState:  api.StateRunning,
 		},
-		{name: "running_not_finished",
+		{
+			name:         "running_not_finished",
 			pipelineSpec: api.PipelineSpec{},
 			currentStatus: api.PipelineStatus{
 				State: api.StateRunning,
@@ -356,7 +371,8 @@ func Test_Controller_syncHandler_mock(t *testing.T) {
 			expectedResult: "",
 			expectedState:  api.StateRunning,
 		},
-		{name: "running_recover",
+		{
+			name:         "running_recover",
 			pipelineSpec: api.PipelineSpec{},
 			currentStatus: api.PipelineStatus{
 				State: api.StateRunning,
@@ -368,7 +384,8 @@ func Test_Controller_syncHandler_mock(t *testing.T) {
 			expectedState:  api.StateRunning,
 			expectedError:  errorRecover1,
 		},
-		{name: "running_get_error",
+		{
+			name:         "running_get_error",
 			pipelineSpec: api.PipelineSpec{},
 			currentStatus: api.PipelineStatus{
 				State: api.StateRunning,
@@ -380,7 +397,8 @@ func Test_Controller_syncHandler_mock(t *testing.T) {
 			expectedState:   api.StateCleaning,
 			expectedMessage: "running failed .*error1",
 		},
-		{name: "running_finished_timeout",
+		{
+			name:         "running_finished_timeout",
 			pipelineSpec: api.PipelineSpec{},
 			currentStatus: api.PipelineStatus{
 				State: api.StateRunning,
@@ -397,7 +415,8 @@ func Test_Controller_syncHandler_mock(t *testing.T) {
 			expectedResult: api.ResultTimeout,
 			expectedState:  api.StateCleaning,
 		},
-		{name: "running_finished_terminated",
+		{
+			name:         "running_finished_terminated",
 			pipelineSpec: api.PipelineSpec{},
 			currentStatus: api.PipelineStatus{
 				State: api.StateRunning,
@@ -416,7 +435,8 @@ func Test_Controller_syncHandler_mock(t *testing.T) {
 			expectedResult: api.ResultSuccess,
 			expectedState:  api.StateCleaning,
 		},
-		{name: "skip_new",
+		{
+			name:         "skip_new",
 			pipelineSpec: api.PipelineSpec{},
 			currentStatus: api.PipelineStatus{
 				State: api.StateNew,
@@ -426,7 +446,8 @@ func Test_Controller_syncHandler_mock(t *testing.T) {
 			expectedResult: "",
 			expectedState:  api.StateNew,
 		},
-		{name: "skip_finished",
+		{
+			name:         "skip_finished",
 			pipelineSpec: api.PipelineSpec{},
 			currentStatus: api.PipelineStatus{
 				State: api.StateFinished,
@@ -436,7 +457,8 @@ func Test_Controller_syncHandler_mock(t *testing.T) {
 			expectedResult: "",
 			expectedState:  api.StateFinished,
 		},
-		{name: "cleanup_abborted_new",
+		{
+			name: "cleanup_abborted_new",
 			pipelineSpec: api.PipelineSpec{
 				Intent: api.IntentAbort,
 			},
@@ -449,7 +471,8 @@ func Test_Controller_syncHandler_mock(t *testing.T) {
 			expectedResult: api.ResultAborted,
 			expectedState:  api.StateFinished,
 		},
-		{name: "cleanup_abborted_running",
+		{
+			name: "cleanup_abborted_running",
 			pipelineSpec: api.PipelineSpec{
 				Intent: api.IntentAbort,
 			},
@@ -499,11 +522,12 @@ func Test_Controller_syncHandler_mock(t *testing.T) {
 
 func Test_Controller_syncHandler_initiatesRetrying_on500DuringPipelineRunFetch(t *testing.T) {
 	t.Parallel()
+
 	// SETUP
 	mockCtrl := gomock.NewController(t)
 	defer mockCtrl.Finish()
 
-	cf := fake.NewClientFactory()
+	cf := newFakeClientFactory()
 	mockPipelineRunFetcher := mocks.NewMockPipelineRunFetcher(mockCtrl)
 	message := "k8s kapot!"
 	mockPipelineRunFetcher.EXPECT().
@@ -512,16 +536,19 @@ func Test_Controller_syncHandler_initiatesRetrying_on500DuringPipelineRunFetch(t
 
 	examinee := NewController(cf, metrics.NewMetrics())
 	examinee.pipelineRunFetcher = mockPipelineRunFetcher
+
 	// EXERCISE
 	err := examinee.syncHandler("foo/bar")
+
 	// VERIFY
 	assert.ErrorContains(t, err, message)
 }
 
 func Test_Controller_syncHandler_OnTimeout(t *testing.T) {
 	t.Parallel()
+
 	// SETUP
-	cf := fake.NewClientFactory(
+	cf := newFakeClientFactory(
 
 		// the tenant namespace
 		fake.Namespace("tenant-ns-1"),
@@ -588,9 +615,7 @@ func Test_Controller_syncHandler_OnTimeout(t *testing.T) {
 	defer stopController(t, stopCh)
 
 	// VERIFY
-	run, err := getPipelineRun("run1", "tenant-ns-1", cf)
-	assert.NilError(t, err)
-
+	run := getPipelineRun(t, "run1", "tenant-ns-1", cf)
 	status := run.GetStatus()
 
 	assert.Assert(t, status != nil)
@@ -600,8 +625,8 @@ func Test_Controller_syncHandler_OnTimeout(t *testing.T) {
 	assert.Equal(t, "message from Succeeded condition", status.Message)
 }
 
-func newTestRunManager(workFactory k8s.ClientFactory, pipelineRunsConfig *pipelineRunsConfigStruct, secretProvider secrets.SecretProvider, namespaceManager k8s.NamespaceManager) run.Manager {
-	runManager := NewRunManager(workFactory, pipelineRunsConfig, secretProvider, namespaceManager).(*runManager)
+func newTestRunManager(workFactory k8s.ClientFactory, pipelineRunsConfig *pipelineRunsConfigStruct, secretProvider secrets.SecretProvider) run.Manager {
+	runManager := newRunManager(workFactory, pipelineRunsConfig, secretProvider)
 	runManager.testing = &runManagerTesting{
 		getServiceAccountSecretNameStub: func(ctx *runContext) string { return "foo" },
 	}
@@ -609,12 +634,12 @@ func newTestRunManager(workFactory k8s.ClientFactory, pipelineRunsConfig *pipeli
 }
 
 func startController(t *testing.T, cf *fake.ClientFactory) chan struct{} {
-	cs := cf.StewardClientset()
-	cs.PrependReactor("create", "*", fake.NewCreationTimestampReactor())
 	stopCh := make(chan struct{}, 0)
 	metrics := metrics.NewMetrics()
 	controller := NewController(cf, metrics)
-	controller.testing = &controllerTesting{newRunManagerStub: newTestRunManager}
+	controller.testing = &controllerTesting{
+		newRunManagerStub: newTestRunManager,
+	}
 	controller.pipelineRunFetcher = k8s.NewClientBasedPipelineRunFetcher(cf.StewardV1alpha1())
 	cf.StewardInformerFactory().Start(stopCh)
 	cf.TektonInformerFactory().Start(stopCh)
@@ -629,6 +654,7 @@ func stopController(t *testing.T, stopCh chan struct{}) {
 }
 
 func start(t *testing.T, controller *Controller, stopCh chan struct{}) {
+	t.Helper()
 	if err := controller.Run(1, stopCh); err != nil {
 		t.Logf("Error running controller %s", err.Error())
 	}
@@ -638,38 +664,72 @@ func resource(resource string) schema.GroupResource {
 	return schema.GroupResource{Group: "", Resource: resource}
 }
 
-// GetPipelineRun returns the pipeline run with the given name in the given namespace.
-// Return nil if not found.
-func getPipelineRun(name string, namespace string, cf *fake.ClientFactory) (k8s.PipelineRun, error) {
+func getPipelineRun(t *testing.T, name string, namespace string, cf *fake.ClientFactory) k8s.PipelineRun {
+	t.Helper()
 	key := fake.ObjectKey(name, namespace)
 	fetcher := k8s.NewClientBasedPipelineRunFetcher(cf.StewardV1alpha1())
 	pipelineRun, err := fetcher.ByKey(key)
 	if err != nil {
-		return nil, err
+		t.Fatalf("could not get pipeline run: %s", err.Error())
 	}
-	return k8s.NewPipelineRun(pipelineRun, cf)
+	wrapper, err := k8s.NewPipelineRun(pipelineRun, cf)
+	if err != nil {
+		t.Fatalf("could not get pipeline run: %s", err.Error())
+	}
+	return wrapper
 }
 
-func createRun(run *api.PipelineRun, cf *fake.ClientFactory) error {
+func createRun(t *testing.T, run *api.PipelineRun, cf *fake.ClientFactory) {
+	t.Helper()
 	_, err := cf.StewardV1alpha1().PipelineRuns(run.GetNamespace()).Create(run)
-	if err == nil {
-		cf.Sleep("wait for controller to pick up run")
+	if err != nil {
+		t.Fatalf("failed to create pipeline run: %s", err.Error())
 	}
-	return err
+	cf.Sleep("wait for controller to pick up run")
 }
 
-func getRun(name, namespace string, cf *fake.ClientFactory) (*api.PipelineRun, error) {
-	return cf.StewardV1alpha1().PipelineRuns(namespace).Get(name, metav1.GetOptions{})
+func getRun(t *testing.T, name, namespace string, cf *fake.ClientFactory) *api.PipelineRun {
+	t.Helper()
+	run, err := cf.StewardV1alpha1().PipelineRuns(namespace).Get(name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("could not get run: %s", err.Error())
+	}
+	return run
 }
 
-func updateRun(run *api.PipelineRun, namespace string, cf *fake.ClientFactory) (*api.PipelineRun, error) {
-	return cf.StewardV1alpha1().PipelineRuns(namespace).Update(run)
+func updateRun(t *testing.T, run *api.PipelineRun, namespace string, cf *fake.ClientFactory) *api.PipelineRun {
+	t.Helper()
+	updated, err := cf.StewardV1alpha1().PipelineRuns(namespace).Update(run)
+	if err != nil {
+		t.Fatalf("could not update run: %s", err.Error())
+	}
+	return updated
 }
 
-func getTektonTaskRun(namespace string, cf *fake.ClientFactory) (*tekton.TaskRun, error) {
-	return cf.TektonV1beta1().TaskRuns(namespace).Get(tektonTaskRunName, metav1.GetOptions{})
+func getTektonTaskRun(t *testing.T, namespace string, cf *fake.ClientFactory) *tekton.TaskRun {
+	t.Helper()
+	taskRun, err := cf.TektonV1beta1().TaskRuns(namespace).Get(tektonTaskRunName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("could not get Tekton task run: %s", err.Error())
+	}
+	return taskRun
 }
 
-func updateTektonTaskRun(taskRun *tekton.TaskRun, namespace string, cf *fake.ClientFactory) (*tekton.TaskRun, error) {
-	return cf.TektonV1beta1().TaskRuns(namespace).Update(taskRun)
+func updateTektonTaskRun(t *testing.T, taskRun *tekton.TaskRun, namespace string, cf *fake.ClientFactory) *tekton.TaskRun {
+	t.Helper()
+	updated, err := cf.TektonV1beta1().TaskRuns(namespace).Update(taskRun)
+	if err != nil {
+		t.Fatalf("could not update Tekton task run: %s", err.Error())
+	}
+	return updated
+}
+
+func newFakeClientFactory(objects ...runtime.Object) *fake.ClientFactory {
+	cf := fake.NewClientFactory(objects...)
+
+	cf.KubernetesClientset().PrependReactor("create", "*", fake.GenerateNameReactor(0))
+
+	cf.StewardClientset().PrependReactor("create", "*", fake.NewCreationTimestampReactor())
+
+	return cf
 }
