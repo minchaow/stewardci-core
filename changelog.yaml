@@ -18,7 +18,42 @@
 # Do not change the order ("NEXT" needs to be on top).
 - version: "NEXT"
   date: TBD
-  
+  changes:
+  - type: enhancement
+    impact: minor
+    title: Make elasticSearch IndexURL configurable in PipelineRun custom resource objects.
+    description: >-
+      There exists a default elasticSearch IndexURL per cluster. It reduces flexibility to
+      push logs to different indeces in elasticSearch. This change allows developers to
+      make elasticSearch IndexURL configurable in Steward-PipelineRun object as a parameter.
+    warning: ""
+    upgradeNotes: ""
+    pullRequestNumber: 172
+    jiraIssueNumber: 984
+
+- version: "NEXT"
+  date: TBD
+  changes:
+  - type: enhancement
+    impact: minor
+    title: Make Jenkinsfile Runner properties configurable in PipelineRun custom resource objects.
+
+    description: >-
+      Jenkinsfile Runner properties are configurable in Steward PipelineRun manifests at <code>spec.jenkinsfileRunner</code> now.
+
+    warning:
+    upgradeNotes: >-
+      <p>No incompatible changes.</p>
+    deprecations: >-
+      <p>Helm Chart Configuration changed:</p>
+      <ul>
+      <li><code>pipelineRuns.jenkinsfileRunner.image.repository</code> is deprecated: use <code>pipelineRuns.jenkinsfileRunner.image</code> instead</li>
+      <li><code>pipelineRuns.jenkinsfileRunner.image.tag</code> is deprecated: use <code>pipelineRuns.jenkinsfileRunner.image</code> instead</li>
+      <li><code>pipelineRuns.jenkinsfileRunner.image.pullPolicy</code> is deprecated: use <code>pipelineRuns.jenkinsfileRunner.imagePullPolicy</code> instead</li>
+      </ul>
+    pullRequestNumber: 162
+    jiraIssueNumber: 983
+
 - version: "0.5.1"
   date: 2020-10-05
   changes:
