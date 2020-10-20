@@ -18,7 +18,45 @@
 # Do not change the order ("NEXT" needs to be on top).
 - version: "NEXT"
   date: TBD
-  
+  changes:
+
+  - title: Introduce feature flags
+    type: internal
+    impact: patch
+    description: >-
+      There's a new Go package <code>pkg/featureflag</code> to deal
+      with feature flags in Steward controllers.
+
+      Feature flags can be configured via Helm Chart.
+    pullRequestNumber: 168
+
+  - title: Introduce auxiliary pipeline run namespaces
+    type: enhancement
+    impact: patch
+    description: >-
+      So far for the execution of a single pipeline run a single
+      pipeline run sandbox namespace was used, which encapsulated
+      all the resource objects needed during the execution. The
+      sandbox namespace is an untrusted zone, as user-provided
+      code has access to its contents, e.g. pods and secrets.
+
+      With pipeline run log forwarders we plan to deploy an additional
+      service per pipeline run. That service is configured according
+      to the needs of the "owning" pipeline run. The untrusted pipeline
+      code may interact with the service, but must not have access to its
+      configuration, pods, secrets and so on. Obviously such additional
+      services cannot be defined in the pipeline run sandbox namespace.
+
+      Therefore, for each pipeline run an auxiliary namespace gets created
+      next to the main sandbox namespace.
+
+      This change just introduces the creation of pipeline run auxiliary
+      namespaces and changes the naming scheme for those. By default
+      auxiliary namespaces are not created because they are not used yet.
+      Enabling the feature flag <code>CreateAuxNamespaceIfUnused</code>
+      enforces creating auxiliary namespaces.
+    pullRequestNumber: 168
+
 - version: "0.5.1"
   date: 2020-10-05
   changes:
